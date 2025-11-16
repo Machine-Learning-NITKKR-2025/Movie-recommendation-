@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Recommender</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for a better dropdown experience */
+        /* We use 'select2' which requires its own CSS */
+        @import url('https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css');
+        
+        .select2-container .select2-selection--single {
+            height: 42px; /* Match tailwind's h-10 */
+            border-radius: 0.5rem; /* rounded-lg */
+            border: 1px solid #D1D5DB; /* gray-300 */
+        }
+        .select2-container--default .select2-selection--single .select2-selection__rendered {
+            line-height: 42px;
+            padding-left: 0.75rem;
+            color: #374151; /* gray-700 */
+        }
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            height: 40px;
+        }
+        .select2-dropdown {
+            border-radius: 0.5rem;
+            border: 1px solid #D1D5DB;
+        }
+        .select2-container--default .select2-search--dropdown .select2-search__field {
+            border-radius: 0.375rem;
+            border: 1px solid #D1D5DB;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans antialiased">
+
+    <div class="container mx-auto p-4 pt-12 md:pt-24 max-w-2xl">
+        <div class="bg-white p-6 md:p-10 rounded-2xl shadow-xl">
+            
+            <h1 class="text-3xl md:text-4xl font-bold text-center text-gray-800 mb-6">
+                Movie Recommender
+            </h1>
+
+            <!-- Form -->
+            <div class="space-y-6">
+                <div>
+                    <label for="movie-select" class="block text-sm font-medium text-gray-700 mb-2">
+                        Select a movie you like:
+                    </label>
+                    <!-- This select will be enhanced by 'select2' JS library -->
+                    <select id="movie-select" style="width: 100%;">
+                        <option value="">Loading movies...</option>
+                    </select>
+                </div>
+
+                <button id="recommend-btn" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                    Get Recommendations
+                </button>
+            </div>
+
+            <!-- Results Section -->
+            <div id="results" class="mt-8 hidden">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">
+                    Here are your recommendations:
+                </h2>
+                <ul id="recommend-list" class="list-disc list-inside space-y-2 text-gray-700 bg-gray-50 p-4 rounded-lg">
+                    <!-- Recommendations will be inserted here -->
+                </ul>
+            </div>
+
+            <!-- Error Message Box -->
+            <div id="error-box" class="mt-6 hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert">
+                <strong class="font-bold">Error:</strong>
+                <span id="error-message" class="block sm:inline"></span>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- We need jQuery and Select2 for the searchable dropdown -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+
+    <script>
+        // The URL of our local Flask API server
+        const API_URL = 'http://127.0.0.1:5000';
+
+        // Get references to our HTML elements
+        const movieSelect = $('#movie-select');
+        const recommendBtn = document.getElementById('recommend-btn');
+        const resultsDiv = document.getElementById('results');
+        const recommendList = document.getElementById('recommend-list');
+        const errorBox = document.getElementById('error-box');
+        const errorMessage = document.getElementById('error-message');
+
+        /**
+         * Initializes the Select2 dropdown.
+         */
+        function initDropdown() {
+            movieSelect.select2({
+                placeholder: 'Type to search for a movie',
+                allowClear: true
+            });
+        }
+        
+        /**
+         * Fetches the full movie list from our API
+         * and populates the dropdown.
+         */
+        async function populateMovieDropdown() {
+            try {
+                const response = await fetch(`${API_URL}/movies`);
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.statusText}`);
+                }
+                const movieTitles = await response.json();
+                
+                // Clear the 'Loading' option
+                movieSelect.empty();
+                
+                // Add a default placeholder
+                movieSelect.append(new Option('Type to search for a movie', ''));
+
+                // Add each movie title as an option
+                movieTitles.forEach(title => {
+                    movieSelect.append(new Option(title, title));
+                });
+                
+                // Refresh the select2 component to show the new options
+                movieSelect.trigger('change');
+
+            } catch (error) {
+                console.error('Error fetching movie list:', error);
+                showError('Could not connect to the API. Is `app.py` running?');
+                movieSelect.empty().append(new Option('Error loading movies', ''));
+            }
+        }
+
+        /**
+         * Fetches recommendations for the selected movie.
+         */
+        async function getRecommendations() {
+            const selectedMovie = movieSelect.val();
+            
+            // Clear previous results and errors
+            resultsDiv.classList.add('hidden');
+            errorBox.classList.add('hidden');
+            recommendList.innerHTML = '';
+
+            if (!selectedMovie) {
+                showError('Please select a movie first.');
+                return;
+            }
+
+            // Show a temporary loading state
+            recommendBtn.disabled = true;
+            recommendBtn.textContent = 'Finding movies...';
+
+            try {
+                // Construct the URL with query parameters
+                const url = new URL(`${API_URL}/recommend`);
+                url.searchParams.append('movie', selectedMovie);
+                
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'An unknown error occurred.');
+                }
+                
+                // Populate the recommendations list
+                if (data.length > 0) {
+                    data.forEach(movieTitle => {
+                        const li = document.createElement('li');
+                        li.textContent = movieTitle;
+                        recommendList.appendChild(li);
+                    });
+                    resultsDiv.classList.remove('hidden');
+                } else {
+                    showError('Could not find any recommendations for this movie.');
+                }
+
+            } catch (error) {
+                console.error('Error fetching recommendations:', error);
+                showError(error.message);
+            } finally {
+                // Restore button state
+                recommendBtn.disabled = false;
+                recommendBtn.textContent = 'Get Recommendations';
+            }
+        }
+
+        /**
+         * Displays an error message to the user.
+         */
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorBox.classList.remove('hidden');
+        }
+
+        // --- INITIALIZATION ---
+
+        // Add event listener to the button
+        recommendBtn.addEventListener('click', getRecommendations);
+        
+        // Initialize the dropdown and load the movies when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            initDropdown();
+            populateMovieDropdown();
+        });
+
+    </script>
+</body>
+</html>
+
